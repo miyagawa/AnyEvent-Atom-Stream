@@ -15,32 +15,24 @@ sub get {
     my($self, $url, %args) = @_;
 
     my $content_cb = delete $args{":content_cb"};
-    http_get $url, want_body_handle => 1, sub {
-        my($handle, $headers) = @_;
-        Scalar::Util::weaken($self);
+    my $disconn_cb = $args{on_disconnect} || sub { };
 
-        my $final_cb = $self->{on_disconnect} || sub {};
+    my %opts;
+    $opts{timeout}    = $self->{timeout} if $self->{timeout};
 
-        if ($handle) {
-            my $disconn_cb = sub {
-                undef $_[0];
-                $final_cb->();
-            };
-            $handle->timeout($self->{timeout}) if $self;
-            $handle->on_timeout($disconn_cb);
-            $handle->on_eof($disconn_cb);
-            $handle->on_read(sub {
-                                 my $h = shift;
-                                 local $XML::Atom::ForceUnicode = 1;
-                                 $content_cb->(delete $h->{rbuf});
-                             });
+    http_get $url, %opts, on_body => sub {
+        my($body, $headers) = @_;
+        local $XML::Atom::ForceUnicode = 1;
+        $content_cb->($body);
+        return 1;
+    }, sub {
+        my($body, $headers) = @_;
+        $disconn_cb->($body);
+    };
 
-            $self->{guard} = AnyEvent::Util::guard {
-                undef $content_cb; # refs AnyEvent::Atom::Stream
-                undef $handle;
-            };
-        }
-    }
+    $self->{guard} = AnyEvent::Util::guard {
+        undef $content_cb; # refs AnyEvent::Atom::Stream
+    };
 }
 
 1;
